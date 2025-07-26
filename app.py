@@ -6,11 +6,11 @@ from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
-st.set_page_config(page_title="Emp Setup Request Extractor", layout="centered")
-st.title("Emp Setup 08.1 - SAP Primary Role Extractor")
+st.set_page_config(page_title="Emp Setup Request Sheet Extractor", layout="centered")
+st.title("Employee Setup Task Extractor")
 
 st.markdown("""
-Upload the Excel file (either `.xls` or `.xlsx`) that contains the task data.
+Upload the Excel file received from Crystal Reports.
 The app will extract and filter rows where **Task Desc = 'Emp Setup 08.1- SAP Primary Role'** and return relevant columns only.
 """)
 
