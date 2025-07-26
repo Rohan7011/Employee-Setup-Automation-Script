@@ -1,17 +1,24 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from io import BytesIO
+from datetime import datetime
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
-st.set_page_config(page_title="Employee Setup Filter", layout="wide")
+st.set_page_config(page_title="Emp Setup Request Extractor", layout="centered")
+st.title("Emp Setup 08.1 - SAP Primary Role Extractor")
 
-st.title("Employee Setup Automation")
-st.markdown("Upload the Excel file containing employee setup tasks to extract only the relevant ones.")
+st.markdown("""
+Upload the Excel file (either `.xls` or `.xlsx`) that contains the task data.
+The app will extract and filter rows where **Task Desc = 'Emp Setup 08.1- SAP Primary Role'** and return relevant columns only.
+""")
 
-uploaded_file = st.file_uploader("Choose an Excel file", type=["xls", "xlsx"])
+uploaded_file = st.file_uploader("Upload Excel file", type=["xls", "xlsx"])
 
 if uploaded_file is not None:
     try:
-        # Determine engine based on file type
+        # Read Excel based on extension
         if uploaded_file.name.endswith('.xls'):
             raw0 = pd.read_excel(uploaded_file, header=None, dtype=str, engine='xlrd')
         else:
@@ -19,38 +26,69 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading Excel file: {e}")
     else:
-        # Find the row containing 'Employee Name' to locate header
-        header_row_idx = None
-        for i, row in raw0.iterrows():
-            if row.str.contains('Employee Name', na=False).any():
-                header_row_idx = i
+        # 1. Locate main and subheader rows
+        row_main = row_sub = None
+        for i in range(len(raw0)):
+            vals = raw0.iloc[i].fillna('').astype(str).str.strip().tolist()
+            if row_main is None and 'HD ID' in vals:
+                row_main = i
+            if row_sub is None and 'Task ID' in vals:
+                row_sub = i
+            if row_main is not None and row_sub is not None:
                 break
 
-        if header_row_idx is None:
-            st.error("Header row with 'Employee Name' not found.")
+        if row_main is None or row_sub is None:
+            st.error("Could not find both 'HD ID' and 'Task ID' header rows.")
+            st.dataframe(raw0.head(10))
         else:
-            df = pd.read_excel(uploaded_file, header=header_row_idx, dtype=str)
-            df.columns = df.columns.str.strip()
+            # 2. Build headers
+            main_hdr = raw0.iloc[row_main].fillna('').astype(str).str.strip().tolist()
+            sub_hdr = raw0.iloc[row_sub].fillna('').astype(str).str.strip().tolist()
+            flat_cols = [sub_hdr[c] if sub_hdr[c] else main_hdr[c] for c in range(raw0.shape[1])]
 
-            if 'Task Name' not in df.columns:
-                st.error("'Task Name' column not found in the file.")
+            # 3. Slice and set columns
+            data = raw0.iloc[row_sub+1:].copy()
+            data.columns = flat_cols
+
+            # 4. Clean and filter
+            data['HD ID'] = data['HD ID'].replace('HD ID', np.nan)
+            data['HD ID'] = data['HD ID'].ffill()
+
+            expected = ['HD ID', 'Task ID', 'Task Desc', 'Task Tech', 'Task Create', 'Task Status', 'Task Group']
+            missing = [col for col in expected if col not in data.columns]
+
+            if missing:
+                st.error(f"Missing columns in file: {missing}")
+                st.write("Detected columns:", data.columns.tolist())
             else:
-                filtered_df = df[df['Task Name'].str.contains("Emp Setup 08.1- SAP Primary Role", na=False)]
+                clean = data.dropna(how='all')
+                clean = clean[clean['Task Desc'] == "Emp Setup 08.1- SAP Primary Role"]
+                clean = clean[expected]
 
-                if filtered_df.empty:
-                    st.warning("No matching rows found for 'Emp Setup 08.1- SAP Primary Role'.")
+                if clean.empty:
+                    st.warning("No matching 'Emp Setup 08.1- SAP Primary Role' rows found.")
                 else:
-                    st.success(f"Found {len(filtered_df)} matching rows.")
-                    st.dataframe(filtered_df, use_container_width=True)
+                    # Create downloadable Excel file
+                    output = BytesIO()
+                    clean.to_excel(output, index=False)
+                    output.seek(0)
 
-                    # Convert to Excel in-memory
-                    buffer = BytesIO()
-                    filtered_df.to_excel(buffer, index=False, engine='openpyxl')
-                    buffer.seek(0)
+                    # Add filters
+                    wb = load_workbook(output)
+                    ws = wb.active
+                    last_col = ws.max_column
+                    last_col_letter = get_column_letter(last_col)
+                    ws.auto_filter.ref = f"A1:{last_col_letter}1"
 
+                    # Save again
+                    final_output = BytesIO()
+                    wb.save(final_output)
+                    final_output.seek(0)
+
+                    st.success("Filtered file ready. Download below:")
                     st.download_button(
-                        label="📥 Download Filtered Excel",
-                        data=buffer,
-                        file_name="filtered_employee_setup.xlsx",
+                        label="Download Extracted Excel",
+                        data=final_output,
+                        file_name=f"EmpSetup_Requests_{datetime.today():%Y-%m-%d}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
