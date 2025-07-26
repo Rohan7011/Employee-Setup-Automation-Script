@@ -29,17 +29,20 @@ The uploaded Excel file should contain task tracking data, typically with two he
 2. Install requirements using:
    ```bash
    pip install -r requirements.txt
-
+   
+---
 
 ## ✅ Run the App using
 
 streamlit run app.py
 
+---
 
 ## 📦 Output
 
 EmpSetup_Requests_YYYY-MM-DD.xlsx
 
+---
 
 ## 🛠 Dependencies
 pandas
@@ -47,3 +50,5 @@ numpy
 streamlit
 openpyxl
 xlrd (for reading .xls files)
+
+---
