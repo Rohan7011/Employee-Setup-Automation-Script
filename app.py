@@ -1,89 +1,80 @@
-# app.py
-
-import pandas as pd
-import os
-from datetime import datetime
-import numpy as np
 import streamlit as st
-from io import BytesIO
-from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
+import pandas as pd
+import tempfile
+import os
 
-st.title("Emp Setup Request Filter App")
+st.set_page_config(page_title="Employee Setup Automation", layout="wide")
+st.title("Employee Setup - SAP Primary Role Extractor")
 
-uploaded_file = st.file_uploader("Upload your .xls or .xlsx file", type=["xls", "xlsx"])
-if uploaded_file:
-    file_extension = os.path.splitext(uploaded_file.name)[-1].lower()
+uploaded_file = st.file_uploader("Upload the Excel file", type=["xls", "xlsx"])
 
-    # Read uploaded file
-    if file_extension == ".xls":
-        raw0 = pd.read_excel(uploaded_file, header=None, dtype=str)
-        output = BytesIO()
-        raw0.to_excel(output, index=False, header=False, engine='openpyxl')
-        output.seek(0)
-        process_path = output
-    else:
-        raw0 = pd.read_excel(uploaded_file, header=None, dtype=str)
-        process_path = uploaded_file
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.endswith('.xls'):
+            raw0 = pd.read_excel(uploaded_file, header=None, dtype=str, engine='xlrd')
+        else:
+            raw0 = pd.read_excel(uploaded_file, header=None, dtype=str)
+    except Exception as e:
+        st.error(f"Error reading Excel file: {e}")
+        st.stop()
 
-    raw = pd.read_excel(process_path, header=None, dtype=str)
+    # Strip leading/trailing whitespaces
+    raw0 = raw0.applymap(lambda x: x.strip() if isinstance(x, str) else x)
 
-    # Locate header rows
-    row_main = row_sub = None
-    for i in range(len(raw)):
-        vals = raw.iloc[i].fillna('').astype(str).str.strip().tolist()
-        if row_main is None and 'HD ID' in vals:
-            row_main = i
-        if row_sub is None and 'Task ID' in vals:
-            row_sub = i
-        if row_main is not None and row_sub is not None:
+    # Identify the header row
+    header_row = None
+    for i, row in raw0.iterrows():
+        if isinstance(row[0], str) and row[0].strip().lower() == 'employee name':
+            header_row = i
             break
 
-    if row_main is None or row_sub is None:
-        st.error("Could not find both 'HD ID' and 'Task ID' header rows.")
+    if header_row is None:
+        st.error("Header row with 'Employee Name' not found.")
         st.stop()
 
-    main_hdr = raw.iloc[row_main].fillna('').astype(str).str.strip().tolist()
-    sub_hdr  = raw.iloc[row_sub].fillna('').astype(str).str.strip().tolist()
-    flat_cols = [sub_hdr[c] if sub_hdr[c] else main_hdr[c] for c in range(raw.shape[1])]
+    headers = raw0.iloc[header_row].tolist()
+    data = raw0.iloc[header_row + 1:].reset_index(drop=True)
+    data.columns = headers
 
-    data = raw.iloc[row_sub+1 :].copy()
-    data.columns = flat_cols
+    # Clean the dataframe
+    data = data[headers]
+    data = data.dropna(how='all')
 
-    if 'HD ID' in data.columns:
-        data['HD ID'] = data['HD ID'].replace('HD ID', np.nan)
-        data['HD ID'] = data['HD ID'].ffill()
+    # Filter rows where 'Task Description' is 'Emp Setup 08.1- SAP Primary Role'
+    filtered_df = data[data['Task Description'] == 'Emp Setup 08.1- SAP Primary Role'].copy()
 
-    expected = ['HD ID', 'Task ID', 'Task Desc', 'Task Tech', 'Task Create', 'Task Status', 'Task Group']
-    missing = [col for col in expected if col not in data.columns]
-    if missing:
-        st.error(f"Missing expected columns: {missing}")
-        st.stop()
+    if filtered_df.empty:
+        st.warning("No matching rows with 'Emp Setup 08.1- SAP Primary Role' found.")
+    else:
+        # Select required columns if they exist
+        columns_to_display = ['Employee Name', 'Person Number', 'Assignee Name',
+                              'Task Description', 'Task Status', 'Start Date', 'Target End Date']
 
-    clean = data.dropna(how='all')
-    clean = clean[clean['Task Desc'] == "Emp Setup 08.1- SAP Primary Role"]
-    clean = clean[expected]
+        available_columns = [col for col in columns_to_display if col in filtered_df.columns]
+        output_df = filtered_df[available_columns]
 
-    st.success("Filtered Data:")
-    st.dataframe(clean)
+        # Show the result
+        st.subheader("Filtered Data")
+        st.dataframe(output_df, use_container_width=True)
 
-    # Export to Excel with filters
-    output_excel = BytesIO()
-    clean.to_excel(output_excel, index=False)
-    output_excel.seek(0)
+        # Save to Excel
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+            with pd.ExcelWriter(tmp.name, engine='openpyxl') as writer:
+                output_df.to_excel(writer, index=False, sheet_name='FilteredData')
 
-    # Apply filter using openpyxl
-    wb = load_workbook(output_excel)
-    ws = wb.active
-    last_col_letter = get_column_letter(ws.max_column)
-    ws.auto_filter.ref = f"A1:{last_col_letter}1"
-    final_output = BytesIO()
-    wb.save(final_output)
-    final_output.seek(0)
+                # Add autofilter
+                worksheet = writer.sheets['FilteredData']
+                worksheet.auto_filter.ref = worksheet.dimensions
 
-    st.download_button(
-        label="Download Filtered Excel File",
-        data=final_output,
-        file_name=f"EmpSetup_Requests_{datetime.today():%Y-%m-%d}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+            tmp_path = tmp.name
+
+        with open(tmp_path, "rb") as f:
+            st.download_button(
+                label="Download Filtered Excel",
+                data=f,
+                file_name="filtered_employee_setup.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        # Clean up temp file
+        os.remove(tmp_path)
