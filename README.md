@@ -34,3 +34,16 @@ The uploaded Excel file should contain task tracking data, typically with two he
 ## ✅ Run the App using
 
 streamlit run app.py
+
+
+## 📦 Output
+
+EmpSetup_Requests_YYYY-MM-DD.xlsx
+
+
+## 🛠 Dependencies
+pandas
+numpy
+streamlit
+openpyxl
+xlrd (for reading .xls files)
